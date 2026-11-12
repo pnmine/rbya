@@ -1,0 +1,75 @@
+{
+  "args": {
+    "reasoner": "scripted",
+    "episodes": 30,
+    "distinct": 8,
+    "repeats": 2,
+    "slip": 0.5,
+    "seed": 7,
+    "arms": "B1-ReAct,B2-ActRollback,Ours-noCompile,Ours",
+    "out": "results/slip_0.5",
+    "save_traces": false
+  },
+  "summary": {
+    "B1-ReAct": {
+      "incidents": 480,
+      "resolution_rate": 1.0,
+      "mttr_min": 1.6833333333333333,
+      "mttr_first_min": 1.6854166666666666,
+      "mttr_repeat_min": 1.68125,
+      "unnecessary_per_incident": 0.71875,
+      "reversed_per_incident": 0.0,
+      "abandoned_per_incident": 0.0,
+      "escalations_per_incident": 0.0,
+      "harmful_high_risk_total": 0,
+      "collateral_ticks_total": 75,
+      "llm_calls_per_incident": 1.5958333333333334,
+      "store_hits_per_incident": 0.0
+    },
+    "B2-ActRollback": {
+      "incidents": 480,
+      "resolution_rate": 1.0,
+      "mttr_min": 1.69375,
+      "mttr_first_min": 1.6875,
+      "mttr_repeat_min": 1.7,
+      "unnecessary_per_incident": 0.71875,
+      "reversed_per_incident": 0.004166666666666667,
+      "abandoned_per_incident": 0.0,
+      "escalations_per_incident": 0.0,
+      "harmful_high_risk_total": 0,
+      "collateral_ticks_total": 75,
+      "llm_calls_per_incident": 1.5958333333333334,
+      "store_hits_per_incident": 0.0
+    },
+    "Ours-noCompile": {
+      "incidents": 480,
+      "resolution_rate": 0.9979166666666667,
+      "mttr_min": 2.7505219206680587,
+      "mttr_first_min": 2.7531380753138075,
+      "mttr_repeat_min": 2.747916666666667,
+      "unnecessary_per_incident": 0.48333333333333334,
+      "reversed_per_incident": 0.0,
+      "abandoned_per_incident": 0.2,
+      "escalations_per_incident": 0.175,
+      "harmful_high_risk_total": 0,
+      "collateral_ticks_total": 0,
+      "llm_calls_per_incident": 1.9,
+      "store_hits_per_incident": 0.0
+    },
+    "Ours": {
+      "incidents": 480,
+      "resolution_rate": 0.9979166666666667,
+      "mttr_min": 2.464509394572025,
+      "mttr_first_min": 2.7322175732217575,
+      "mttr_repeat_min": 2.1979166666666665,
+      "unnecessary_per_incident": 0.33958333333333335,
+      "reversed_per_incident": 0.0,
+      "abandoned_per_incident": 0.21041666666666667,
+      "escalations_per_incident": 0.14583333333333334,
+      "harmful_high_risk_total": 0,
+      "collateral_ticks_total": 0,
+      "llm_calls_per_incident": 1.2354166666666666,
+      "store_hits_per_incident": 0.4979166666666667
+    }
+  }
+}
