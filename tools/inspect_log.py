@@ -1,7 +1,10 @@
 """Look at why LLM replies failed to parse.  python tools/inspect_log.py results/llm_pilot/llm_log.jsonl"""
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from rbya.reasoners import _extract_json
 

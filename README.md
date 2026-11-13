@@ -87,3 +87,18 @@ python run_experiments.py --reasoner llm --episodes 1 --out results/llm_pilot --
 - TLS errors: `pip install truststore` (uses the Windows certificate store) or point `RBYA_LLM_CA_BUNDLE` at a PEM file.
   `RBYA_LLM_INSECURE=1` turns verification off and is a last resort only.
 - `RBYA_LLM_MAX_TOKENS` (default 1024) and `RBYA_LLM_TIMEOUT` (default 180 s) control each request.
+
+## Dashboard
+
+```
+pip install streamlit
+streamlit run dashboard.py
+```
+
+- **Recorded run** replays an incident from `results/llm_*` with the model's recorded replies (instant, no API calls).
+  Pick the experiment, episode, incident and agent, then press Load incident; the right column compares the same
+  incident handled by B1. A link like `http://localhost:8501/?load=llm_noisy,0,11,Ours` opens one directly.
+- **Live run** injects a fault now. High-risk actions (`drain_node`, `restart_database`) stop and wait for you to
+  approve or reject them in the page.
+
+The look follows the RBYA Blueprint design system (navy line work, Iosevka, square panels).

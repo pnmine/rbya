@@ -74,6 +74,9 @@ class BaseAgent:
         prop = self.reasoner.propose(self.obs, exclude)
         self.res.llm_calls += self.reasoner.calls - before
         self.res.llm_seconds += getattr(self.reasoner, "model_seconds", 0.0) - t_before
+        if prop.candidates:
+            top = prop.candidates[0]
+            self.log(f"REASON {prop.diagnosis} | top: {top.action} ({top.confidence:.2f}) {top.rationale}")
         if not prop.candidates and prop.diagnosis == "unparseable reply":
             self.res.llm_unparsed += 1
             self.log("REASONER reply could not be parsed, waiting one tick")
@@ -258,6 +261,6 @@ class ReconsiderAgent(BaseAgent):
                     self.sim.undo(action)
                     self.res.reversed += 1
                     self.log(f"UNDO WINDOW: no improvement, undo {action}")
-            elif self.compile and not self.obs["alerts"]:
+            elif self.compile and not self.obs["alerts"] and key:
                 self.store.compile(key, action)
                 self.log(f"COMPILE {key} -> {action}")
