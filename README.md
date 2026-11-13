@@ -91,14 +91,16 @@ python run_experiments.py --reasoner llm --episodes 1 --out results/llm_pilot --
 ## Dashboard
 
 ```
-pip install streamlit
+pip install -r requirements.txt
 streamlit run dashboard.py
 ```
 
-- **Recorded run** replays an incident from `results/llm_*` with the model's recorded replies (instant, no API calls).
-  Pick the experiment, episode, incident and agent, then press Load incident; the right column compares the same
-  incident handled by B1. A link like `http://localhost:8501/?load=llm_noisy,0,11,Ours` opens one directly.
-- **Live run** injects a fault now. High-risk actions (`drain_node`, `restart_database`) stop and wait for you to
-  approve or reject them in the page.
+Three tabs, in the order of the talk:
 
-The look follows the RBYA Blueprint design system (navy line work, Iosevka, square panels).
+- **Replay**: one recorded incident, B1 on the left and our agent on the right, moving together one step at a
+  time (Next step / Back / Show the end). The incident list is picked automatically from `results/llm_*` so
+  each choice shows one mechanism: a blip that B1 answers with a database restart, a node that needs approval,
+  a symptom that moves, a fault seen before. The LLM replies are the recorded ones; nothing calls the API.
+- **Results**: the headline numbers and charts, made from `results/llm_clear` and `results/llm_noisy`
+  (and the scripted ablation and sensitivity runs). Every chart can be saved as PNG or SVG from its menu.
+- **Live**: inject a fault into our agent and approve or reject its high-risk actions yourself.

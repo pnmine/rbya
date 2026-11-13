@@ -412,155 +412,375 @@ def log_table(events, upto):
             f'<th style="width:130px">Event</th><th>Detail</th></tr>{body}</table></div>')
 
 
-# ---------------------------------------------------------------- page
-css()
-ss = st.session_state
-ss.setdefault("run", None)
-ss.setdefault("cursor", 0)
-ss.setdefault("playing", False)
-ss.setdefault("compare", None)
+# ---------------------------------------------------------------- results (charts made from results/*)
+import altair as alt
+import pandas as pd
 
-st.markdown('<p class="apptitle">Reconsider before you act</p>'
-            '<p class="appsub">A self-healing agent for microservices, step by step</p>', unsafe_allow_html=True)
+ARM_ORDER = ["B1-ReAct", "B2-ActRollback", "Ours-noCompile", "Ours"]
+ARM_LABEL = {"B1-ReAct": "B1 ReAct", "B2-ActRollback": "B2 act + roll back",
+             "Ours-noCompile": "Ours, no memory", "Ours": "Ours"}
+ARM_COLOUR = {"B1 ReAct": "#9DB1D9", "B2 act + roll back": "#6982B8", "Ours, no memory": "#1F5FE0", "Ours": "#0032A0"}
+SETTING = {"llm_clear": "Clear evidence", "llm_noisy": "Noisy evidence"}
 
-folders = sorted(d for d in glob.glob(os.path.join("results", "llm_*"))
-                 if os.path.exists(os.path.join(d, "llm_cache.jsonl")))
-_q = (st.query_params.get("load") or "").split(",")
-_qf = os.path.join("results", _q[0]) if len(_q) == 4 else None
-c1, c2, c3, c4, c5, c6 = st.columns([1.1, 1.3, 0.7, 0.9, 1.6, 1.0], vertical_alignment="bottom")
-mode = c1.selectbox("Mode", ["Recorded run", "Live run"])
-if mode == "Recorded run":
-    folder = c2.selectbox("Experiment", folders or ["(no results/llm_* folder)"],
-                          index=folders.index(_qf) if _qf in folders else 0)
-    episode = c3.number_input("Episode", 0, 99, int(_q[1]) if len(_q) == 4 else 0)
-    index = c4.number_input("Incident", 0, 15, int(_q[2]) if len(_q) == 4 else 5)
-    arm = c5.selectbox("Agent", list(AGENTS), format_func=lambda a: AGENTS[a],
-                       index=list(AGENTS).index(_q[3]) if len(_q) == 4 and _q[3] in AGENTS else 0)
-    if c6.button("Load incident", type="primary", use_container_width=True) and folders:
-        noise = 0.5 if "noisy" in folder else 0.0
-        with st.spinner("Replaying the recorded run"):
-            ss.run = replay(folder, int(episode), int(index), arm, noise)
-            ss.compare = replay(folder, int(episode), int(index), "B1-ReAct", noise) if arm != "B1-ReAct" else None
-        ss.cursor, ss.playing = 0, False
-else:
-    kind = c2.selectbox("Fault to inject", FAULT_KINDS, format_func=lambda k: FAULT_NAMES[k])
-    targets = {"slow_query": ["db"], "node_pressure": ["node-a", "node-b"],
-               "shifting": ["payment", "inventory"]}.get(
-        kind, ["frontend", "cart", "catalog", "checkout", "payment", "inventory"])
-    target = c3.selectbox("Where", targets)
-    arm = c4.selectbox("Agent", list(AGENTS), format_func=lambda a: AGENTS[a].split(" (")[0])
-    reasoner = c5.selectbox("Reasoner", ["Scripted (instant)", "LLM (about 40 s per call)"])
-    if c6.button("Start incident", type="primary", use_container_width=True):
-        ss.run = start_live(kind, target, arm, reasoner.startswith("LLM"), 0.0)
-        ss.compare, ss.cursor, ss.playing = None, 0, True
 
-# A link such as ?load=llm_noisy,0,11,Ours opens straight onto a recorded incident (handy for the talk).
-q = st.query_params.get("load")
-if q and ss.run is None:
-    try:
-        f, e, i, a = q.split(",")
-        path = os.path.join("results", f)
-        ss.run = replay(path, int(e), int(i), a, 0.5 if "noisy" in f else 0.0)
-        ss.compare = replay(path, int(e), int(i), "B1-ReAct", 0.5 if "noisy" in f else 0.0) if a != "B1-ReAct" else None
-        ss.cursor = int(st.query_params.get("at", 0))
-    except Exception as err:
-        st.error(f"Could not open {q}: {err}")
+def alt_theme(chart, height=260):
+    if not isinstance(chart, alt.FacetChart):
+        chart = chart.properties(height=height)
+    return (chart
+            .configure(font="Iosevka, ui-monospace, Menlo, Consolas, monospace", background=T["surface"])
+            .configure_axis(labelLimit=260, labelColor=T["muted"], titleColor=T["ink"], gridColor=T["grid"], domainColor=T["line"],
+                            tickColor=T["line"], labelFontSize=13, titleFontSize=13, titleFontWeight=700)
+            .configure_legend(labelColor=T["ink"], titleColor=T["ink"], labelFontSize=13, orient="bottom", title=None)
+            .configure_view(stroke=None)
+            .configure_header(labelColor=T["ink"], labelFontSize=14, labelFontWeight=800, title=None))
 
-run = ss.run
-if run is None:
-    st.markdown('<div class="panel"><p class="ptitle">No incident loaded</p><p>Pick a recorded run and press '
-                '<b>Load incident</b>, or switch to Live run to inject a fault yourself.</p></div>',
+
+@st.cache_data
+def load_incidents(folder):
+    df = pd.read_csv(os.path.join(folder, "incidents.csv"))
+    df["agent_label"] = df["agent"].map(ARM_LABEL).fillna(df["agent"])
+    df["setting"] = SETTING.get(os.path.basename(folder), os.path.basename(folder))
+    return df
+
+
+def bootstrap(values, n=1000, seed=0):
+    rng = random.Random(seed)
+    vals = list(values)
+    means = sorted(sum(rng.choice(vals) for _ in vals) / len(vals) for _ in range(n))
+    return means[int(.025 * n)], means[int(.975 * n)]
+
+
+def mean_ci(df, col):
+    rows = []
+    for (setting, arm), g in df.groupby(["setting", "agent_label"]):
+        v = g[col].dropna().astype(float)
+        lo, hi = bootstrap(v)
+        rows.append({"setting": setting, "agent": arm, "mean": v.mean(), "lo": lo, "hi": hi})
+    return pd.DataFrame(rows)
+
+
+def bar_ci(stats, title):
+    order = [ARM_LABEL[a] for a in ARM_ORDER]
+    base = alt.Chart(stats).encode(
+        y=alt.Y("agent:N", sort=order, title=None),
+        color=alt.Color("agent:N", scale=alt.Scale(domain=list(ARM_COLOUR), range=list(ARM_COLOUR.values())), legend=None))
+    bars = base.mark_bar(height=22).encode(x=alt.X("mean:Q", title=title),
+                                           tooltip=["agent", alt.Tooltip("mean:Q", format=".2f"),
+                                                    alt.Tooltip("lo:Q", format=".2f"), alt.Tooltip("hi:Q", format=".2f")])
+    err = base.mark_rule(color=T["deep"], strokeWidth=2).encode(x="lo:Q", x2="hi:Q")
+    labels = base.mark_text(align="left", dx=6, color=T["deep"], fontSize=13, fontWeight=700).encode(
+        x="hi:Q", text=alt.Text("mean:Q", format=".2f"))
+    return alt.layer(bars, err, labels, data=stats).properties(height=150, width=300).facet(
+        column=alt.Column("setting:N", title=None))
+
+
+def headline(df):
+    out = []
+    for setting, g in df.groupby("setting"):
+        b, o = g[g.agent == "B1-ReAct"], g[g.agent == "Ours"]
+        out.append({"setting": setting,
+                    "unneeded": (b.unnecessary.mean(), o.unnecessary.mean()),
+                    "damage": (int(b.collateral_ticks.sum()), int(o.collateral_ticks.sum())),
+                    "mttr": (b.ttr_min.mean(), o.ttr_min.mean()),
+                    "calls": (b.llm_calls.mean(), o.llm_calls.mean())})
+    return out
+
+
+def figure_card(label, before, after, fmt, note):
+    return (f'<div class="panel" style="min-height:120px"><p class="label">{label}</p>'
+            f'<p class="figure">{fmt.format(before)} <span class="arrow">to</span> {fmt.format(after)}</p>'
+            f'<p class="muted" style="font-size:13px;margin:0">{note}</p></div>')
+
+
+def results_tab():
+    folders = [d for d in ("results/llm_clear", "results/llm_noisy") if os.path.exists(os.path.join(d, "incidents.csv"))]
+    if not folders:
+        st.markdown('<div class="panel"><p class="ptitle">No LLM results yet</p><p>Run run_experiments.py with '
+                    '--reasoner llm and the results appear here.</p></div>', unsafe_allow_html=True)
+        return
+    df = pd.concat([load_incidents(f) for f in folders])
+    n_ep = df.episode.nunique()
+    st.markdown(f'<p class="lead">B1 against our agent, muse-glimmer-30b on the same {n_ep * 16} incidents per setting '
+                f'({n_ep} episodes of 16). Bars show the mean, lines the 95% bootstrap interval.</p>',
                 unsafe_allow_html=True)
-    st.stop()
+    for h in headline(df):
+        st.markdown(f'<p class="ptitle" style="margin-top:6px">{h["setting"]}</p>', unsafe_allow_html=True)
+        c = st.columns(4)
+        b, o = h["unneeded"]
+        c[0].markdown(figure_card("Actions that did not help", b, o, "{:.2f}",
+                                  f"per incident, {100 * (o - b) / b:+.0f}%"), unsafe_allow_html=True)
+        b, o = h["damage"]
+        c[1].markdown(figure_card("Outage the agent caused", b, o, "{}", "ticks in total (1 tick = 30 s)"),
+                      unsafe_allow_html=True)
+        b, o = h["mttr"]
+        c[2].markdown(figure_card("Time to recover", b, o, "{:.1f}", f"minutes, {o - b:+.1f} min: the price of checking"),
+                      unsafe_allow_html=True)
+        b, o = h["calls"]
+        c[3].markdown(figure_card("LLM calls", b, o, "{:.2f}", f"per incident, {100 * (o - b) / b:+.0f}% thanks to memory"),
+                      unsafe_allow_html=True)
 
-if run.get("error"):
-    st.error(f"The run stopped: {run['error']}")
+    st.markdown('<p class="ptitle" style="margin-top:14px">Actions that did not help, per incident</p>', unsafe_allow_html=True)
+    st.altair_chart(alt_theme(bar_ci(mean_ci(df, "unnecessary"), "per incident"), 150), use_container_width=True)
 
-live = hasattr(run.get("human"), "answered")   # isinstance would break: the class is redefined on every rerun
-if live and not run["done"] and hasattr(run["agent"], "res"):
-    run["events"] = parse_events(run["agent"].res.trace)
-n = len(run["frames"])
-last = max(0, n - 1)
-if live and not run["done"]:
-    ss.cursor = last
-ss.cursor = min(ss.cursor, last)
-upto = ss.cursor
-obs = run["frames"][upto] if n else None
+    l, r = st.columns(2)
+    with l:
+        st.markdown('<p class="ptitle">Where they happened</p>', unsafe_allow_html=True)
+        sub = df[df.agent.isin(["B1-ReAct", "Ours"])]
+        by = sub.groupby(["setting", "agent_label", "fault"], as_index=False)["unnecessary"].sum()
+        by = by[by.groupby(["setting", "fault"]).unnecessary.transform("sum") > 0]
+        by["fault"] = by["fault"].map(FAULT_NAMES)
+        ch = alt.Chart(by).mark_bar().encode(
+            y=alt.Y("fault:N", title=None), x=alt.X("unnecessary:Q", title="actions in total"),
+            yOffset="agent_label:N",
+            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["B1 ReAct", "Ours"],
+                                                             range=[ARM_COLOUR["B1 ReAct"], ARM_COLOUR["Ours"]])),
+            tooltip=["setting", "fault", "agent_label", "unnecessary"]).properties(height=110, width=520).facet(
+            row=alt.Row("setting:N", title=None))
+        st.altair_chart(alt_theme(ch, 110), use_container_width=True)
+    with r:
+        st.markdown('<p class="ptitle">Time to recover</p>', unsafe_allow_html=True)
+        st.altair_chart(alt_theme(bar_ci(mean_ci(df, "ttr_min"), "minutes"), 150), use_container_width=True)
+        st.markdown('<p class="ptitle">Memory: LLM calls on a repeated fault</p>', unsafe_allow_html=True)
+        rep = df[df.agent.isin(["Ours-noCompile", "Ours"])].copy()
+        rep["seen"] = rep.occurrence.map(lambda o: "first time" if o == 1 else "seen before")
+        rep = rep.groupby(["setting", "agent_label", "seen"], as_index=False)["llm_calls"].mean()
+        ch = alt.Chart(rep).mark_bar().encode(
+            x=alt.X("seen:N", title=None, axis=alt.Axis(labelAngle=0)), y=alt.Y("llm_calls:Q", title="calls per incident"), xOffset="agent_label:N",
+            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["Ours, no memory", "Ours"],
+                                                             range=[ARM_COLOUR["Ours, no memory"], ARM_COLOUR["Ours"]])),
+            tooltip=["setting", "seen", "agent_label", alt.Tooltip("llm_calls:Q", format=".2f")]
+        ).properties(height=170, width=240).facet(column=alt.Column("setting:N", title=None))
+        st.altair_chart(alt_theme(ch, 170), use_container_width=True)
 
-left, mid, right = st.columns([1.05, 2.45, 1.25])
-with left:
-    st.markdown(steps_panel(run["events"], upto), unsafe_allow_html=True)
-with mid:
-    MID = st.container()
-with right:
-    human = run.get("human")
-    if live and human.pending is not None:
-        a = human.pending
-        title, body, yes, no = ACTION_COPY.get(a.name, ("Run {a}?", "This is a high-risk action.", "Run it", "Don't run it"))
-        fmt = dict(t=a.target, a=str(a))
-        st.markdown(f'<div class="approval"><p class="ptitle">Approval needed</p><p><b>{title.format(**fmt)}</b></p>'
-                    f'<p>{body.format(**fmt)}</p></div>', unsafe_allow_html=True)
-        b1, b2 = st.columns(2)
-        if b1.button(yes.format(**fmt), type="primary", use_container_width=True):
-            human.decision, human.pending = True, None
-            human.answered.set()
-            time.sleep(0.3)
-            st.rerun()
-        if b2.button(no.format(**fmt), use_container_width=True):
-            human.decision, human.pending = False, None
-            human.answered.set()
-            time.sleep(0.3)
-            st.rerun()
-    show_truth = st.toggle("Show the injected fault", value=False)
-    st.markdown(overview_panel(run, upto, show_truth), unsafe_allow_html=True)
-    cmp = ss.compare
-    if cmp is not None and cmp["res"] is not None and upto >= last:
-        a, b = run["res"], cmp["res"]
-        rows = [("Actions run", a.executed, b.executed), ("Did not help", a.unnecessary, b.unnecessary),
-                ("Damage (ticks)", a.collateral_ticks, b.collateral_ticks),
-                ("Recovered in", f"{a.ttr_min:.1f} min" if a.ttr_min is not None else "no",
-                 f"{b.ttr_min:.1f} min" if b.ttr_min is not None else "no")]
-        tbl = "".join(f"<tr><td>{k}</td><td>{x}</td><td>{y}</td></tr>" for k, x, y in rows)
-        st.markdown(f'<div class="panel"><p class="ptitle">Same incident, B1</p><table class="kv">'
-                    f'<tr><td></td><td><b>This agent</b></td><td><b>B1 ReAct</b></td></tr>{tbl}</table></div>',
-                    unsafe_allow_html=True)
+    with st.expander("Scripted reasoner: ablation and sensitivity (30 episodes each)"):
+        ab = "results/ablation/summary.json"
+        if os.path.exists(ab):
+            import json
+            s = json.load(open(ab))["summary"]
+            rows = [{"Variant": k, "Did not help / incident": round(v["unnecessary_per_incident"], 2),
+                     "Outage ticks": v["collateral_ticks_total"], "Recover (min)": round(v["mttr_min"], 2)}
+                    for k, v in s.items()]
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        pts = []
+        for slip in ("0.0", "0.25", "0.5"):
+            p = f"results/slip_{slip}/summary.json"
+            if os.path.exists(p):
+                import json
+                for k, v in json.load(open(p))["summary"].items():
+                    pts.append({"slip": float(slip), "agent": ARM_LABEL.get(k, k), "did not help": v["unnecessary_per_incident"]})
+        if pts:
+            ch = alt.Chart(pd.DataFrame(pts)).mark_line(point=True).encode(
+                x=alt.X("slip:Q", title="chance the reasoner jumps to a generic fix"),
+                y=alt.Y("did not help:Q", title="did not help / incident"),
+                color=alt.Color("agent:N", scale=alt.Scale(domain=list(ARM_COLOUR), range=list(ARM_COLOUR.values()))))
+            st.altair_chart(alt_theme(ch, 240), use_container_width=True)
+    st.markdown('<p class="muted" style="font-size:13px">Every chart has a menu (three dots, top right) to save it '
+                'as PNG or SVG for the slides and the paper.</p>', unsafe_allow_html=True)
 
-with MID:
-    acts = [e["raw"].split(" ")[0] for e in run["events"] if e["tag"] == "EXECUTE" and e["frame"] <= upto]
+
+# ---------------------------------------------------------------- replay: two agents side by side
+@st.cache_data
+def find_stories(folder):
+    """Pick incidents from the recorded run that show each mechanism, so nobody has to hunt for them."""
+    import json
+    traces = {}
+    path = os.path.join(folder, "traces.jsonl")
+    if not os.path.exists(path):
+        return []
+    for line in open(path, encoding="utf-8"):
+        t = json.loads(line)
+        traces[(t["episode"], t["index"], t["agent"])] = t
+    rows = pd.read_csv(os.path.join(folder, "incidents.csv"))
+    ri = {(r.episode, r["index"], r.agent): r for _, r in rows.iterrows()}
+    stories = []
+
+    def first(pred, title, why):
+        for (e, i, a), t in sorted(traces.items()):
+            if a == "Ours" and pred(e, i, t):
+                stories.append({"title": title, "why": why, "episode": e, "index": i, "fault": t["fault"],
+                                "target": t["target"]})
+                return
+
+    b1 = lambda e, i: ri.get((e, i, "B1-ReAct"))
+    first(lambda e, i, t: b1(e, i) is not None and b1(e, i).collateral_ticks > 0,
+          "B1 restarts the database for a blip",
+          "A short blip that would heal on its own. B1 keeps acting and ends with a database restart.")
+    first(lambda e, i, t: t["fault"] == "transient" and b1(e, i) is not None and b1(e, i).unnecessary > ri[(e, i, "Ours")].unnecessary,
+          "A blip that heals itself", "Both agents see the same alert. Ours stops sooner.")
+    first(lambda e, i, t: t["fault"] == "node_pressure" and any("ESCALATE" in l for l in t["trace"]),
+          "Node out of disk: ask a person first", "Draining a node is high risk, so ours waits for approval.")
+    first(lambda e, i, t: any("RECONSIDER" in l and "changed" in l for l in t["trace"]),
+          "The symptom moves before acting", "Ours re-checks, sees a different alert and plans again.")
+    first(lambda e, i, t: any("procedure store" in l for l in t["trace"]),
+          "A fault it has seen before", "Ours reuses the fix it saved last time instead of asking the LLM.")
+    return stories
+
+
+def compact_map(obs, events, upto):
+    acts = [e["raw"].split(" ")[0] for e in events if e["tag"] == "EXECUTE" and e["frame"] <= upto]
     drained = {a.split("(")[1].rstrip(")") for a in acts if a.startswith("drain_node")}
-    last_target = acts[-1].split("(")[1].rstrip(")") if acts else None
-    st.markdown(f'<div class="panel"><p class="ptitle">Service map</p>{service_map(obs, last_target, drained)}</div>',
+    target = acts[-1].split("(")[1].rstrip(")") if acts else None
+    return service_map(obs, target, drained)
+
+
+def side(run, upto, title):
+    n = len(run["frames"])
+    obs = run["frames"][min(upto, n - 1)] if n else None
+    events = [e for e in run["events"] if e["frame"] <= upto and e["tag"] != "REASON"]
+    res = run["res"]
+    finished = upto >= n - 1
+    if finished:
+        badge = ("Recovered" if res.resolved else "Not recovered", T["resolved"] if res.resolved else T["alert"])
+    elif obs and obs["alerts"]:
+        badge = ("Working on it", T["ink"])
+    elif events:
+        badge = ("No alerts now, watching", T["resolved"])
+    else:
+        badge = ("Waiting for an alert", T["muted"])
+    items = "".join(f'<li><span class="num" style="background:{e["colour"]}">{k}</span><span>'
+                    f'<b style="color:{e["colour"]}">{e["label"]}</b> {html.escape(e["text"])}</span></li>'
+                    for k, e in enumerate(events, 1)) or '<li><span></span><span class="muted">Nothing yet.</span></li>'
+    done = [e for e in run["events"] if e["tag"] == "EXECUTE"]
+    score = ""
+    if finished:
+        score = (f'<table class="kv" style="margin-top:8px"><tr><td>Actions</td><td>{res.executed} '
+                 f'({res.unnecessary} did not help)</td></tr><tr><td>Outage caused</td><td>{res.collateral_ticks} ticks'
+                 f'</td></tr><tr><td>Recovered in</td><td>{"%.1f min" % res.ttr_min if res.ttr_min is not None else "no"}'
+                 f'</td></tr></table>')
+    st.markdown(f'<div class="panel"><p class="ptitle" style="margin-bottom:4px">{title}</p>'
+                f'<span class="badge" style="color:{badge[1]};border-color:{badge[1]}">{badge[0]}</span>'
+                f'{compact_map(obs, run["events"], upto)}<ul class="steps big">{items}</ul>{score}</div>',
                 unsafe_allow_html=True)
-    p1, p2, p3, p4, p5 = st.columns([1, 1, 1, 1, 2.6], vertical_alignment="center")
-    if p1.button("Play", type="primary", use_container_width=True):
-        ss.playing = True
-    if p2.button("Pause", use_container_width=True):
-        ss.playing = False
-    if p3.button("Step", use_container_width=True):
-        ss.playing = False
-        ss.cursor = min(last, ss.cursor + 1)
-        st.rerun()
-    if p4.button("Reset", use_container_width=True):
-        ss.playing, ss.cursor = False, 0
-        st.rerun()
-    note = run["source"]
-    if run.get("misses"):
-        note += f" ({run['misses']} replies were not in the recording and came from the scripted reasoner)"
-    if live and not run["done"] and str(run["model"]) != "scripted reasoner" and (human.pending is None):
-        note += f". Asking {run['model']}; one answer takes about 40 seconds"
-    p5.markdown(f'<p class="muted" style="margin:0;font-size:13px">{html.escape(note)}</p>', unsafe_allow_html=True)
-
-    st.markdown(log_table(run["events"], upto), unsafe_allow_html=True)
 
 
-# keep the page moving
-if live and not run["done"]:
-    if human.pending is None:
+def replay_tab():
+    folders = [d for d in ("results/llm_noisy", "results/llm_clear") if os.path.exists(os.path.join(d, "llm_cache.jsonl"))]
+    if not folders:
+        st.markdown('<div class="panel"><p class="ptitle">No recorded runs</p><p>Run the LLM experiments first.</p></div>',
+                    unsafe_allow_html=True)
+        return
+    stories = []
+    for f in folders:
+        for s in find_stories(f):
+            s["folder"] = f
+            if s["title"] not in [x["title"] for x in stories]:
+                stories.append(s)
+    pick = st.radio("Incident", list(range(len(stories))), horizontal=True, label_visibility="collapsed",
+                    format_func=lambda k: stories[k]["title"])
+    s = stories[pick]
+    key = (s["folder"], s["episode"], s["index"])
+    if ss.get("pair_key") != key:
+        noise = 0.5 if "noisy" in s["folder"] else 0.0
+        ss.pair = (replay(s["folder"], s["episode"], s["index"], "B1-ReAct", noise),
+                   replay(s["folder"], s["episode"], s["index"], "Ours", noise))
+        ss.pair_key, ss.t = key, 0
+    a, b = ss.pair
+    last = max(len(a["frames"]), len(b["frames"])) - 1
+    st.markdown(f'<p class="lead">{html.escape(s["why"])} <span class="muted">Hidden from both agents: '
+                f'{FAULT_NAMES[s["fault"]].lower()} at {s["target"]}. Recorded with muse-glimmer-30b, '
+                f'{SETTING[os.path.basename(s["folder"])].lower()}.</span></p>', unsafe_allow_html=True)
+    c = st.columns([1, 1, 1, 1, 4], vertical_alignment="center")
+    if c[0].button("Back", use_container_width=True):
+        ss.t = max(0, ss.t - 1)
+    if c[1].button("Next step", type="primary", use_container_width=True):
+        ss.t = min(last, ss.t + 1)
+    if c[2].button("Show the end", use_container_width=True):
+        ss.t = last
+    if c[3].button("Start over", use_container_width=True):
+        ss.t = 0
+    c[4].markdown(f'<p class="clock">{ss.t * TICK_SECONDS / 60:.1f} min after the fault</p>', unsafe_allow_html=True)
+    l, r = st.columns(2)
+    with l:
+        side(a, ss.t, "B1: act straight away")
+    with r:
+        side(b, ss.t, "Ours: check, then act")
+
+
+# ---------------------------------------------------------------- live
+def live_tab():
+    c = st.columns([1.6, 1, 1.4, 1], vertical_alignment="bottom")
+    kind = c[0].selectbox("Fault to inject", FAULT_KINDS, format_func=lambda k: FAULT_NAMES[k],
+                          index=FAULT_KINDS.index("node_pressure"))
+    targets = {"slow_query": ["db"], "node_pressure": ["node-a", "node-b"], "shifting": ["payment", "inventory"]}.get(
+        kind, ["frontend", "cart", "catalog", "checkout", "payment", "inventory"])
+    target = c[1].selectbox("Where", targets)
+    reasoner = c[2].selectbox("Reasoner", ["Scripted (instant)", "muse-glimmer-30b (about 40 s per call)"])
+    if c[3].button("Inject fault", type="primary", use_container_width=True):
+        ss.live = start_live(kind, target, "Ours", reasoner.startswith("muse"), 0.0)
+    run = ss.get("live")
+    if run is None:
+        st.markdown('<p class="lead">Inject a fault and watch our agent handle it. When it wants to do something '
+                    'risky, it stops and asks you.</p>', unsafe_allow_html=True)
+        return
+    if hasattr(run.get("agent"), "res"):
+        run["events"] = parse_events(run["agent"].res.trace)
+    human = run["human"]
+    l, r = st.columns([1.6, 1])
+    with l:
+        n = len(run["frames"])
+        obs = run["frames"][-1] if n else None
+        st.markdown(f'<div class="panel">{compact_map(obs, run["events"], n)}</div>', unsafe_allow_html=True)
+    with r:
+        if human.pending is not None:
+            a = human.pending
+            title, body, yes, no = ACTION_COPY.get(a.name, ("Run {a}?", "This is a high-risk action.", "Run it", "Don't run it"))
+            fmt = dict(t=a.target, a=str(a))
+            st.markdown(f'<div class="approval"><p class="ptitle">Your call</p><p><b>{title.format(**fmt)}</b></p>'
+                        f'<p>{body.format(**fmt)}</p></div>', unsafe_allow_html=True)
+            b1, b2 = st.columns(2)
+            if b1.button(yes.format(**fmt), type="primary", use_container_width=True):
+                human.decision, human.pending = True, None
+                human.answered.set()
+                time.sleep(0.3)
+                st.rerun()
+            if b2.button(no.format(**fmt), use_container_width=True):
+                human.decision, human.pending = False, None
+                human.answered.set()
+                time.sleep(0.3)
+                st.rerun()
+        events = [e for e in run["events"] if e["tag"] != "REASON"]
+        items = "".join(f'<li><span class="num" style="background:{e["colour"]}">{k}</span><span>'
+                        f'<b style="color:{e["colour"]}">{e["label"]}</b> {html.escape(e["text"])}</span></li>'
+                        for k, e in enumerate(events, 1))
+        status = "Done" if run["done"] else ("Waiting for you" if human.pending is not None else "Working")
+        if not run["done"] and human.pending is None and run["model"] != "scripted reasoner":
+            status += f", asking {run['model']}"
+        st.markdown(f'<div class="panel"><p class="ptitle">{status}</p><ul class="steps big">{items}</ul></div>',
+                    unsafe_allow_html=True)
+    if run.get("error"):
+        st.error(f"The run stopped: {run['error']}")
+    if not run["done"] and human.pending is None:
         time.sleep(0.6)
         st.rerun()
-elif ss.playing and ss.cursor < last:
-    time.sleep(0.8)
-    ss.cursor += 1
-    st.rerun()
-elif ss.playing:
-    ss.playing = False
+
+
+# ---------------------------------------------------------------- page
+css()
+st.markdown(f"""<style>
+.stTabs [data-baseweb="tab-list"] {{ gap: 0; border-bottom: 1.5px solid {T['ink']}; }}
+.stTabs [data-baseweb="tab"] {{ border-radius: 0; padding: 8px 22px; }}
+.stTabs [data-baseweb="tab"] p, .stTabs button[role="tab"] p {{ font-size: 18px !important; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }}
+.stTabs [aria-selected="true"] {{ background: {T['ink']}; }}
+.stTabs [aria-selected="true"] p {{ color: {T['surface']} !important; }}
+p.lead {{ font-size: 17px !important; line-height: 1.5; max-width: 70em; margin: 6px 0 12px; }}
+.label {{ font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; margin: 0 0 6px; }}
+.panel p.figure {{ font-size: 34px !important; line-height: 1.15 !important; font-weight: 800; color: {T['deep']} !important; margin: 0 0 4px; letter-spacing: .02em; }}
+.panel p.figure .arrow {{ font-size: 15px !important; font-weight: 400; color: {T['muted']} !important; }}
+p.clock {{ font-size: 20px !important; font-weight: 800; color: {T['deep']} !important; margin: 0; }}
+.steps.big li {{ font-size: 15px; }}
+.steps.big b {{ display: inline; margin-right: 6px; }}
+div[role="radiogroup"] label p {{ font-size: 15px; }}
+span[data-testid="stIconMaterial"] {{ font-family: "Material Symbols Rounded" !important; }}
+button[role="tab"] p, button[data-baseweb="tab"] p, button[role="tab"] div {{ font-size: 18px !important;
+  font-weight: 800 !important; letter-spacing: .06em; text-transform: uppercase; }}
+</style>""", unsafe_allow_html=True)
+ss = st.session_state
+st.markdown('<p class="apptitle">Reconsider before you act</p>'
+            '<p class="appsub">Prapatsorn Sangrod, CPE 633 term project</p>', unsafe_allow_html=True)
+t1, t2, t3 = st.tabs(["Replay", "Results", "Live"])
+with t1:
+    replay_tab()
+with t2:
+    results_tab()
+with t3:
+    live_tab()
