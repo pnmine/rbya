@@ -234,6 +234,11 @@ class LLMReasoner:
             except urllib.error.HTTPError as e:
                 self.latency_total += time.time() - t0
                 last = f"HTTP {e.code}: {e.read()[:300]!r}"
+                if e.code in (400, 401, 403, 404):
+                    # wrong model name, key or address: every later call would fail the same way,
+                    # so stop the run instead of filling the results with failed incidents
+                    raise RuntimeError(f"{self.base_url} refused model '{self.model}' ({last}). "
+                                       "Check RBYA_LLM_BASE_URL / --model, then rerun the same command.")
                 if e.code not in (408, 429, 500, 502, 503, 504):
                     break
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
