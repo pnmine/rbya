@@ -1198,11 +1198,10 @@ def details_panel(a, b, upto, story):
         return f'<div class="det-block"><p class="det-who">{who}</p>{body}{reason}</div>'
 
     why = L("stories").get(story["title"], (story["title"], story["why"]))[1]
-    st.markdown(f'<div class="panel details"><p class="ptitle">{L("details")}</p>'
+    return (f'<div class="panel details"><p class="ptitle">{L("details")}</p>'
                 f'<p class="det-time">{L("clock", m=upto * TICK_SECONDS / 60)}</p>'
                 f'{block(a, "B1")}{block(b, L("ours"))}'
-                f'<p class="det-story">{html.escape(why)} {L("hidden", f=fault_name(story["fault"]), t=story["target"])}</p></div>',
-                unsafe_allow_html=True)
+                f'<p class="det-story">{html.escape(why)} {L("hidden", f=fault_name(story["fault"]), t=story["target"])}</p></div>')
 
 
 def flow_log(a, b, upto):
@@ -1220,11 +1219,160 @@ def flow_log(a, b, upto):
         f'<td><span class="dot" style="background:{e["colour"]}"></span>{ev_label(e)}</td><td>{html.escape(ev_text(e))}</td></tr>'
         for k, (f, who, e) in reversed(list(enumerate(rows, 1))))
     body = body or f'<tr><td colspan="5" class="muted">{L("press_next")}</td></tr>'
-    st.markdown(f'<div class="panel flowlog"><div class="flowhead"><p class="ptitle">{L("log")}</p>{legend}'
+    return (f'<div class="panel flowlog"><div class="flowhead"><p class="ptitle">{L("log")}</p>{legend}'
                 f'<span class="muted" style="font-size:13px">{L("newest")}</span></div>'
                 f'<div class="flowbody"><table class="log"><tr><th style="width:60px">{cols[0]}</th><th style="width:100px">{cols[1]}</th>'
                 f'<th style="width:80px">{cols[2]}</th><th style="width:130px">{cols[3]}</th><th>{cols[4]}</th></tr>{body}'
-                f'</table></div></div>', unsafe_allow_html=True)
+                f'</table></div></div>')
+
+
+PLAYER_CSS = """
+*{box-sizing:border-box} body{margin:0;background:#FDFDFE;color:#0032A0;
+ font-family:Iosevka,Kanit,ui-monospace,Menlo,Consolas,monospace}
+p{margin:0} .muted{color:#4D67A2}
+.ctrl{display:flex;gap:10px;align-items:center;margin:0 0 8px}
+.ctrl button,.ctrl select{font:inherit;font-weight:700;letter-spacing:.04em;font-size:15px;height:42px;padding:0 18px;
+ border:1.5px solid #0032A0;background:#fff;color:#0032A0;border-radius:0;cursor:pointer}
+.ctrl button.primary{background:#0032A0;color:#fff} .ctrl button:hover{background:#E3E9F3}
+.ctrl button.primary:hover{background:#0B2B86} .ctrl button:focus-visible{outline:2px solid #1F5FE0;outline-offset:2px}
+.ctrl .grow{flex:1} .clock{font-size:21px;font-weight:800;color:#0B2B86;margin-left:8px;white-space:nowrap}
+.kbd{font-size:12px;color:#4D67A2}
+.grid{display:grid;grid-template-columns:1.5fr 1.5fr 1.05fr;gap:12px}
+.panel{background:#fff;border:2px solid #0032A0;padding:10px 14px}
+.ptitle{font-size:21px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;line-height:1.3}
+.sidehead{display:flex;align-items:center;gap:14px;min-height:42px}
+.badge{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border:1.5px solid;text-transform:uppercase}
+.mapbox{height:388px;margin-top:4px} .mapbox svg{width:100%;height:100%;display:block}
+.details{height:438px;overflow-y:auto}
+.det-time{font-size:20px;font-weight:800;color:#0B2B86;margin:6px 0 8px}
+.det-block{border-top:1.5px solid #0032A0;padding:8px 0 6px}
+.det-who{font-size:15px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;margin:0 0 4px}
+.det-last{font-size:16px;line-height:1.45;margin:0 0 4px}
+.det-tag{color:#fff;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px}
+.det-why{font-size:14px;color:#4D67A2;margin:4px 0 0;line-height:1.4}
+.det-story{font-size:13px;color:#4D67A2;border-top:1px dashed #9DB1D9;padding-top:8px;margin:6px 0 0}
+.kv{width:100%;border-collapse:collapse;font-size:13px} .kv td{border-top:1px solid #9DB1D9;padding:5px 4px;vertical-align:top}
+.kv td:first-child{font-weight:700;letter-spacing:.04em;text-transform:uppercase;width:42%}
+.flowlog{margin-top:12px} .flowhead{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.leg{font-size:13px} .dot{display:inline-block;width:10px;height:10px;border-radius:9999px;margin-right:6px}
+.flowbody{height:150px;overflow-y:auto;margin-top:6px}
+.log{width:100%;border-collapse:collapse;font-size:14px}
+.log th{text-align:left;font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:12px;border-bottom:1.5px solid #0032A0;padding:4px 6px}
+.log td{border-bottom:1px solid #DCE5F6;padding:4px 6px;vertical-align:top} .log tr.now td{background:#E3E9F3}
+body.paused *{animation-play-state:paused!important}
+"""
+
+
+def _svg_only(html_doc):
+    """map_html returns <style>…</style><svg>…</svg>; the player needs the two parts separately."""
+    i = html_doc.index("<svg")
+    return html_doc[:i], html_doc[i:]
+
+
+def build_player(a, b, story, motion=True):
+    import json
+    last = max(len(a["frames"]), len(b["frames"])) - 1
+    frames, map_css = [], ""
+    for t in range(last + 1):
+        row = {}
+        for key, run, title in (("a", a, L("b1_title")), ("b", b, L("ours_title"))):
+            n = len(run["frames"])
+            u = min(t, n - 1)
+            obs = run["frames"][u]
+            css_, svg = _svg_only(map_html(obs, run["events"], u, motion=motion, speed=1.0))
+            map_css = map_css or css_
+            res = run["res"]
+            if t >= n - 1:
+                badge = (L("recovered") if res.resolved else L("not_recovered"), T["resolved"] if res.resolved else T["alert"])
+            elif obs["alerts"]:
+                badge = (L("working"), T["ink"])
+            elif any(e["frame"] <= t for e in run["events"]):
+                badge = (L("watching"), T["resolved"])
+            else:
+                badge = (L("waiting_alert"), T["muted"])
+            row[key] = svg
+            row[key + "h"] = (f'<p class="ptitle">{title}</p><span class="badge" style="color:{badge[1]};'
+                              f'border-color:{badge[1]}">{badge[0]}</span>')
+        row["details"] = details_panel(a, b, t, story)
+        row["log"] = flow_log(a, b, t)
+        row["clock"] = L("clock", m=t * TICK_SECONDS / 60)
+        row["dur"] = max(beat_seconds(a["events"], t), beat_seconds(b["events"], t)) if motion else 1.6
+        frames.append(row)
+    words = {"back": L("back"), "next": L("next"), "play": L("play"), "pause": L("pause"), "over": L("start_over"),
+             "keys": "Space: play / pause    ← →: step" if lang() == "en" else "Space: เล่น / หยุด    ← →: ทีละขั้น"}
+    return """<!doctype html><html><head><meta charset="utf-8">
+<style>@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600&display=swap');
+@import url('""" + FONT + """/400.css'); @import url('""" + FONT + """/700.css'); @import url('""" + FONT + """/800.css');
+""" + PLAYER_CSS + """</style>""" + map_css + """</head><body>
+<div class="ctrl">
+ <button id="back">""" + words["back"] + """</button>
+ <button id="next" class="primary">""" + words["next"] + """</button>
+ <button id="play">""" + words["play"] + """</button>
+ <button id="over">""" + words["over"] + """</button>
+ <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+  <option value="1.5">1.5×</option><option value="2">2×</option></select>
+ <span class="clock" id="clock"></span><span class="grow"></span><span class="kbd">""" + words["keys"] + """</span>
+</div>
+<div class="grid">
+ <div class="panel"><div class="sidehead" id="ah"></div><div class="mapbox" id="am"></div></div>
+ <div class="panel"><div class="sidehead" id="bh"></div><div class="mapbox" id="bm"></div></div>
+ <div id="det"></div>
+</div>
+<div id="log"></div>
+<script>
+const F = """ + json.dumps(frames) + """;
+const W = """ + json.dumps(words) + """;
+let t = 0, mode = 'step', speed = 1, clockT = 0, lastNow = null;
+// mode: 'play'  = time runs and moves on to the next step by itself
+//       'step'  = time runs only until the current step's animation ends (after Next / Back / Start over)
+//       'pause' = time stands still, mid-animation, until Play is pressed
+const $ = id => document.getElementById(id);
+function svgs() { return [...document.querySelectorAll('.mapbox svg')]; }
+function show(i) {
+  t = Math.max(0, Math.min(F.length - 1, i));
+  const f = F[t];
+  $('am').innerHTML = f.a; $('bm').innerHTML = f.b; $('ah').innerHTML = f.ah; $('bh').innerHTML = f.bh;
+  $('det').innerHTML = f.details; $('log').innerHTML = f.log; $('clock').textContent = f.clock;
+  clockT = 0;
+  svgs().forEach(s => { try { s.pauseAnimations(); s.setCurrentTime(0); } catch (e) {} });
+}
+function setMode(m) {
+  mode = m;
+  const playing = mode === 'play';
+  $('play').textContent = playing ? W.pause : W.play;
+  $('play').classList.toggle('primary', playing);
+  document.body.classList.toggle('paused', mode === 'pause');
+}
+function tick(now) {
+  if (lastNow !== null && mode !== 'pause') {
+    const dt = (now - lastNow) / 1000 * speed;
+    const dur = F[t].dur;
+    clockT = mode === 'step' ? Math.min(clockT + dt, dur) : clockT + dt;
+    svgs().forEach(s => { try { s.setCurrentTime(clockT); } catch (e) {} });
+    if (mode === 'play' && clockT >= dur) {
+      if (t < F.length - 1) show(t + 1); else setMode('step');
+    }
+  }
+  lastNow = now;
+  requestAnimationFrame(tick);
+}
+$('back').onclick = () => { show(t - 1); setMode('step'); };
+$('next').onclick = () => { show(t + 1); setMode('step'); };
+$('over').onclick = () => { show(0); setMode('step'); };
+$('play').onclick = () => {
+  if (mode === 'play') { setMode('pause'); return; }
+  if (t >= F.length - 1 && clockT >= F[t].dur) show(0);
+  setMode('play');
+};
+$('speed').onchange = e => { speed = parseFloat(e.target.value); };
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
+  if (e.code === 'ArrowRight') $('next').click();
+  if (e.code === 'ArrowLeft') $('back').click();
+});
+show(0); requestAnimationFrame(tick);
+</script></body></html>"""
 
 
 def replay_tab():
@@ -1239,72 +1387,18 @@ def replay_tab():
             s_["folder"] = f
             if s_["title"] not in [x["title"] for x in stories]:
                 stories.append(s_)
-    c = st.columns([2.6, 0.8, 1, 0.9, 0.9, 0.65], vertical_alignment="center")
-    pick = c[0].selectbox("Incident", list(range(len(stories))), label_visibility="collapsed",
-                          format_func=lambda k: L("stories").get(stories[k]["title"], (stories[k]["title"],))[0])
+    pick = st.selectbox("Incident", list(range(len(stories))), label_visibility="collapsed",
+                        format_func=lambda k: L("stories").get(stories[k]["title"], (stories[k]["title"],))[0])
     s_ = stories[pick]
     key = (s_["folder"], s_["episode"], s_["index"])
     if ss.get("pair_key") != key:
         noise = 0.5 if "noisy" in s_["folder"] else 0.0
         ss.pair = (replay(s_["folder"], s_["episode"], s_["index"], "B1-ReAct", noise),
                    replay(s_["folder"], s_["episode"], s_["index"], "Ours", noise))
-        ss.pair_key, ss.t, ss.playing = key, 0, False
+        ss.pair_key = key
     a, b = ss.pair
-    last = max(len(a["frames"]), len(b["frames"])) - 1
-    if c[1].button(L("back"), use_container_width=True):
-        ss.t, ss.playing = max(0, ss.t - 1), False
-    if c[2].button(L("next"), type="primary", use_container_width=True):
-        ss.t, ss.playing = min(last, ss.t + 1), False
-    if c[3].button(L("pause") if ss.get("playing") else L("play"), use_container_width=True, key="playbtn"):
-        ss.playing = not ss.get("playing")
-        if ss.playing and ss.t >= last:
-            ss.t = 0
-        ss.last_tick = time.time()
-        st.rerun()
-    if c[4].button(L("start_over"), use_container_width=True):
-        ss.t, ss.playing = 0, False
-    c[5].selectbox("Speed", [0.5, 1.0, 1.5, 2.0], index=1, key="speed", label_visibility="collapsed",
-                   format_func=lambda v: f"{v:g}×")
-
-    sp = ss.get("speed", 1.0)
-    every = (max(beat_seconds(a["events"], ss.t, sp), beat_seconds(b["events"], ss.t, sp))
-             if ss.get("motion", True) else 1.6 / sp) if ss.get("playing") else None
-
-    @st.fragment(run_every=every)
-    def stage():
-        # On a timer tick, move one step; the map, details and log below all redraw for the new step.
-        if ss.get("playing") and time.time() - ss.get("last_tick", 0) >= (every or 0) - .05:
-            if ss.t < last:
-                ss.t += 1
-                ss.last_tick = time.time()
-            else:
-                ss.playing = False
-                st.rerun()
-        st.markdown(f'<p class="clock" style="margin:0">{L("clock", m=ss.t * TICK_SECONDS / 60)}</p>', unsafe_allow_html=True)
-        left, mid, right = st.columns([1.5, 1.5, 1.05])
-        for col, run, title, k in ((left, a, L("b1_title"), "panel-b1"), (mid, b, L("ours_title"), "panel-ours")):
-            with col:
-                n = len(run["frames"])
-                obs = run["frames"][min(ss.t, n - 1)] if n else None
-                res = run["res"]
-                if ss.t >= n - 1:
-                    badge = (L("recovered") if res.resolved else L("not_recovered"), T["resolved"] if res.resolved else T["alert"])
-                elif obs and obs["alerts"]:
-                    badge = (L("working"), T["ink"])
-                elif any(e["frame"] <= ss.t for e in run["events"]):
-                    badge = (L("watching"), T["resolved"])
-                else:
-                    badge = (L("waiting_alert"), T["muted"])
-                with st.container(border=True, key=k):
-                    st.markdown(f'<div class="sidehead"><p class="ptitle">{title}</p><span class="badge" '
-                                f'style="color:{badge[1]};border-color:{badge[1]}">{badge[0]}</span></div>',
-                                unsafe_allow_html=True)
-                    show_map(obs, run["events"], min(ss.t, n - 1), height=390)
-        with right:
-            details_panel(a, b, ss.t, s_)
-        flow_log(a, b, ss.t)
-
-    stage()
+    # The whole player runs in the browser, so Play, Pause and the steps answer at once.
+    components.html(build_player(a, b, s_, motion=ss.get("motion", True)), height=790, scrolling=False)
 
 
 # ---------------------------------------------------------------- live
