@@ -43,7 +43,7 @@ CATEGORY = {  # trace tag -> (label shown, colour)
 }
 LEGEND = {"Alert": T["alert"], "Plan": T["ink"], "Re-check": T["pending"], "Human": T["human"],
           "Action": T["focus"], "Memory": T["memory"]}
-AGENTS = {"Ours": "Ours (re-check + risk tiers + memory)", "Ours-noCompile": "Ours without memory",
+AGENTS = {"Ours": "RBYA (re-check + risk tiers + memory)", "Ours-noCompile": "RBYA without memory",
           "B1-ReAct": "B1 plain ReAct", "B2-ActRollback": "B2 act, then roll back"}
 FAULT_NAMES = {"bad_deploy": "Bad deploy", "config_error": "Wrong config", "memory_leak": "Memory leak",
                "traffic_spike": "Traffic spike", "transient": "Brief blip (heals itself)",
@@ -59,7 +59,7 @@ TXT = {
     "en": {"subtitle": "Prapatsorn Sangrod, CPE 633 term project", "views": ["Replay", "Results", "Live"],
            "animation": "Animation", "animation_help": "Moving packets and pulsing alerts on the map",
            "back": "Back", "next": "Next step", "play": "Play", "pause": "Pause", "start_over": "Start over",
-           "clock": "{m:.1f} min after the fault", "b1_title": "B1: acts straight away", "ours_title": "Ours: checks, then acts",
+           "clock": "{m:.1f} min after the fault", "b1_title": "B1: acts straight away", "ours_title": "RBYA: checks, then acts",
            "working": "Working on it", "waiting_alert": "Waiting for an alert", "watching": "No alerts, watching",
            "recovered": "Recovered", "not_recovered": "Not recovered", "details": "Step details",
            "nothing_yet": "Nothing yet. Both agents start at the first alert.", "recovered_in": "Recovered in {m:.1f} min",
@@ -67,7 +67,7 @@ TXT = {
            "outage": "Outage caused", "outage_val": "{m} min ({t} ticks)", "diagnosis": "LLM diagnosis.",
            "hidden": "Hidden from both agents: {f} at {t}.", "log": "Decision log", "newest": "newest first",
            "cols": ["No.", "Time", "Agent", "Event", "What happened"], "press_next": "Press Next step to start.",
-           "min": "{m:.1f} min", "ours": "Ours",
+           "min": "{m:.1f} min", "ours": "RBYA",
            "no_runs_t": "No recorded runs yet", "no_runs": "The replay needs the LLM experiment results. Run run_experiments.py with --reasoner llm, then reload this page.",
            "fault_inject": "Fault to inject", "where": "Where", "reasoner": "Reasoner",
            "reasoners": ["Scripted (instant)", "muse-glimmer-30b (about 40 s per call)"], "inject": "Inject fault",
@@ -93,7 +93,7 @@ TXT = {
            "outage": "ระบบล่มเพราะ agent", "outage_val": "{m} นาที ({t} tick)", "diagnosis": "LLM วินิจฉัยว่า",
            "hidden": "ปัญหาที่ใส่ไว้ (ทั้งสองฝั่งไม่เห็น): {f} ที่ {t}", "log": "บันทึกการตัดสินใจ", "newest": "ล่าสุดอยู่บน",
            "cols": ["ลำดับ", "เวลา", "ฝั่ง", "เหตุการณ์", "เกิดอะไรขึ้น"], "press_next": "กด ขั้นถัดไป เพื่อเริ่ม",
-           "min": "{m:.1f} นาที", "ours": "ของเรา",
+           "min": "{m:.1f} นาที", "ours": "RBYA",
            "no_runs_t": "ยังไม่มีผลที่บันทึกไว้", "no_runs": "หน้าเล่นซ้ำต้องใช้ผลการทดลองกับ LLM รัน run_experiments.py --reasoner llm ก่อน แล้วโหลดหน้านี้ใหม่",
            "fault_inject": "ปัญหาที่จะใส่", "where": "ที่ไหน", "reasoner": "ตัวคิด",
            "reasoners": ["สคริปต์ (ทันที)", "muse-glimmer-30b (ราว 40 วินาทีต่อครั้ง)"], "inject": "ใส่ปัญหา",
@@ -893,8 +893,8 @@ import pandas as pd
 
 ARM_ORDER = ["B1-ReAct", "B2-ActRollback", "Ours-noCompile", "Ours"]
 ARM_LABEL = {"B1-ReAct": "B1 ReAct", "B2-ActRollback": "B2 act + roll back",
-             "Ours-noCompile": "Ours, no memory", "Ours": "Ours"}
-ARM_COLOUR = {"B1 ReAct": "#9DB1D9", "B2 act + roll back": "#6982B8", "Ours, no memory": "#1F5FE0", "Ours": "#0032A0"}
+             "Ours-noCompile": "RBYA, no memory", "Ours": "RBYA"}
+ARM_COLOUR = {"B1 ReAct": "#9DB1D9", "B2 act + roll back": "#6982B8", "RBYA, no memory": "#1F5FE0", "RBYA": "#0032A0"}
 SETTING = {"llm_clear": "Clear evidence", "llm_noisy": "Noisy evidence"}
 
 
@@ -962,7 +962,8 @@ def headline(df):
 
 
 def figure_card(label, before, after, fmt, note):
-    return (f'<div class="panel" style="min-height:120px"><p class="label">{label}</p>'
+    who = "B1 → RBYA"
+    return (f'<div class="panel" style="min-height:120px"><p class="label">{label} <span class="muted" style="font-size:12px">· {who}</span></p>'
             f'<p class="figure">{fmt.format(before)} <span class="arrow">{"to" if lang() == "en" else "เป็น"}</span> {fmt.format(after)}</p>'
             f'<p class="muted" style="font-size:13px;margin:0">{note}</p></div>')
 
@@ -982,9 +983,9 @@ def results_tab():
         return
     df = pd.concat([load_incidents(f) for f in folders])
     n_ep = df.episode.nunique()
-    lead = (f"B1 against our agent, muse-glimmer-30b on the same {n_ep * 16} incidents per setting "
-            f"({n_ep} episodes of 16). Bars show the mean, lines the 95% bootstrap interval.") if lang() == "en" else (
-            f"เทียบ B1 กับ agent ของเรา ใช้ muse-glimmer-30b กับเหตุการณ์ชุดเดียวกัน {n_ep * 16} เหตุการณ์ต่อชุด "
+    lead = (f"B1 against RBYA, Gateway-30B (muse-glimmer-30b) on the same {n_ep * 16} incidents per setting "
+            f"({n_ep} episodes of 16). Bars show the mean, lines a 95% bootstrap interval over incidents (the paper also reports episode-level intervals).") if lang() == "en" else (
+            f"เทียบ B1 กับ RBYA ใช้ Gateway-30B (muse-glimmer-30b) กับเหตุการณ์ชุดเดียวกัน {n_ep * 16} เหตุการณ์ต่อชุด "
             f"({n_ep} episode ละ 16) แท่งคือค่าเฉลี่ย เส้นคือช่วงความเชื่อมั่น 95% แบบ bootstrap")
     st.markdown(f'<p class="lead">{lead}</p>', unsafe_allow_html=True)
     for h in headline(df):
@@ -994,13 +995,15 @@ def results_tab():
         c[0].markdown(figure_card(R("Actions that did not help"), b, o, "{:.2f}",
                                   (f"per incident, {100 * (o - b) / b:+.0f}%" if lang() == "en" else f"ต่อเหตุการณ์ {100 * (o - b) / b:+.0f}%")), unsafe_allow_html=True)
         b, o = h["damage"]
-        c[1].markdown(figure_card(R("Outage the agent caused"), b, o, "{}", "ticks in total (1 tick = 30 s)" if lang() == "en" else "tick รวม (1 tick = 30 วินาที)"),
+        note = (("neither agent caused any outage in this setting" if lang() == "en" else "ทั้งสองฝั่งไม่ได้ทำให้ระบบล่มเลยในชุดนี้")
+                if b == 0 and o == 0 else ("minutes in total, over 160 incidents" if lang() == "en" else "นาทีรวม จาก 160 เหตุการณ์"))
+        c[1].markdown(figure_card(R("Outage the agent caused"), b * 0.5, o * 0.5, "{:g}", note),
                       unsafe_allow_html=True)
         b, o = h["mttr"]
-        c[2].markdown(figure_card(R("Time to recover"), b, o, "{:.1f}", f"minutes, {o - b:+.1f} min: the price of checking" if lang() == "en" else f"นาที ช้าลง {o - b:+.1f} นาที เป็นราคาของการตรวจซ้ำ"),
+        c[2].markdown(figure_card(R("Time to recover"), b, o, "{:.1f}", f"minutes per incident, {o - b:+.1f} min: the price of checking" if lang() == "en" else f"นาที ช้าลง {o - b:+.1f} นาที เป็นราคาของการตรวจซ้ำ"),
                       unsafe_allow_html=True)
         b, o = h["calls"]
-        c[3].markdown(figure_card(R("LLM calls"), b, o, "{:.2f}", f"per incident, {100 * (o - b) / b:+.0f}% thanks to memory" if lang() == "en" else f"ต่อเหตุการณ์ {100 * (o - b) / b:+.0f}% เพราะมีความจำ"),
+        c[3].markdown(figure_card(R("LLM calls"), b, o, "{:.2f}", f"per incident, {100 * (o - b) / b:+.0f}% against B1" if lang() == "en" else f"ต่อเหตุการณ์ {100 * (o - b) / b:+.0f}% เทียบกับ B1"),
                       unsafe_allow_html=True)
 
     st.markdown('<p class="ptitle" style="margin-top:14px">' + R("Actions that did not help, per incident") + '</p>', unsafe_allow_html=True)
@@ -1016,8 +1019,8 @@ def results_tab():
         ch = alt.Chart(by).mark_bar().encode(
             y=alt.Y("fault:N", title=None), x=alt.X("unnecessary:Q", title="actions in total"),
             yOffset="agent_label:N",
-            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["B1 ReAct", "Ours"],
-                                                             range=[ARM_COLOUR["B1 ReAct"], ARM_COLOUR["Ours"]])),
+            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["B1 ReAct", "RBYA"],
+                                                             range=[ARM_COLOUR["B1 ReAct"], ARM_COLOUR["RBYA"]])),
             tooltip=["setting", "fault", "agent_label", "unnecessary"]).properties(height=110, width=520).facet(
             row=alt.Row("setting:N", title=None))
         st.altair_chart(alt_theme(ch, 110), use_container_width=True)
@@ -1030,8 +1033,8 @@ def results_tab():
         rep = rep.groupby(["setting", "agent_label", "seen"], as_index=False)["llm_calls"].mean()
         ch = alt.Chart(rep).mark_bar().encode(
             x=alt.X("seen:N", title=None, axis=alt.Axis(labelAngle=0)), y=alt.Y("llm_calls:Q", title="calls per incident"), xOffset="agent_label:N",
-            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["Ours, no memory", "Ours"],
-                                                             range=[ARM_COLOUR["Ours, no memory"], ARM_COLOUR["Ours"]])),
+            color=alt.Color("agent_label:N", scale=alt.Scale(domain=["RBYA, no memory", "RBYA"],
+                                                             range=[ARM_COLOUR["RBYA, no memory"], ARM_COLOUR["RBYA"]])),
             tooltip=["setting", "seen", "agent_label", alt.Tooltip("llm_calls:Q", format=".2f")]
         ).properties(height=170, width=240).facet(column=alt.Column("setting:N", title=None))
         st.altair_chart(alt_theme(ch, 170), use_container_width=True)
@@ -1058,8 +1061,8 @@ def results_tab():
             base = alt.Chart(df_m).encode(
                 x=alt.X("model:N", sort=[n for n, _ in runs], title=None, axis=alt.Axis(labelAngle=0)),
                 xOffset="agent:N",
-                color=alt.Color("agent:N", scale=alt.Scale(domain=["B1 ReAct", "Ours"],
-                                                           range=[ARM_COLOUR["B1 ReAct"], ARM_COLOUR["Ours"]])))
+                color=alt.Color("agent:N", scale=alt.Scale(domain=["B1 ReAct", "RBYA"],
+                                                           range=[ARM_COLOUR["B1 ReAct"], ARM_COLOUR["RBYA"]])))
             ch = alt.layer(base.mark_bar().encode(y=alt.Y("did not help:Q", title="did not help / incident")),
                            base.mark_rule(color=T["deep"], strokeWidth=2).encode(y="lo:Q", y2="hi:Q"))
             st.altair_chart(alt_theme(ch, 260), use_container_width=True)
@@ -1126,9 +1129,9 @@ def find_stories(folder):
     first(lambda e, i, t: t["fault"] == "node_pressure" and any("ESCALATE" in l for l in t["trace"]),
           "Node out of disk: ask a person first", "Draining a node is high risk, so ours waits for approval.")
     first(lambda e, i, t: any("RECONSIDER" in l and "changed" in l for l in t["trace"]),
-          "The symptom moves before acting", "Ours re-checks, sees a different alert and plans again.")
+          "The symptom moves before acting", "RBYA re-checks, sees a different alert and plans again.")
     first(lambda e, i, t: any("procedure store" in l for l in t["trace"]),
-          "A fault it has seen before", "Ours reuses the fix it saved last time instead of asking the LLM.")
+          "A fault it has seen before", "RBYA reuses the fix it saved last time instead of asking the LLM.")
     return stories
 
 
