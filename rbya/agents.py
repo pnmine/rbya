@@ -115,6 +115,7 @@ class BaseAgent:
 
 class ReActAgent(BaseAgent):
     name = "B1-ReAct"
+    pre_wait = 0          # ticks to wait before every action (0 for B1; 1 for the B1-wait control)
 
     def handle(self):
         tried: set[str] = set()
@@ -127,9 +128,19 @@ class ReActAgent(BaseAgent):
                 self.tick()
                 continue
             a = prop.candidates[0].action
+            if self.pre_wait:
+                self.wait(self.pre_wait)
+                if self.done():
+                    break
             if not self.execute(a):
                 tried.add(str(a))
             self.wait(self.settle)
+
+
+class WaitingReActAgent(ReActAgent):
+    """Control: B1 that waits one tick before every action, without looking at anything again."""
+    name = "B1-wait"
+    pre_wait = 1
 
 
 class RollbackAgent(BaseAgent):
@@ -164,9 +175,11 @@ class ReconsiderAgent(BaseAgent):
                  store: ProcedureStore | None = None, max_replans: int = 2,
                  min_confidence: float = 0.4, max_holds: int = 2,
                  use_tiers: bool = True, use_reconsider: bool = True, use_hold: bool = True,
+                 recheck: str = "compare",
                  name: str | None = None, **kw):
         super().__init__(reasoner, **kw)
         self.use_tiers, self.use_reconsider, self.use_hold = use_tiers, use_reconsider, use_hold
+        self.recheck = recheck   # "compare": wait a tick and compare alert sets; "wait": only wait (control)
         self.min_confidence = min_confidence   # below this a candidate is not committed yet
         self.max_holds = max_holds
         self.human = human
@@ -178,6 +191,8 @@ class ReconsiderAgent(BaseAgent):
     def _reconsider(self, plan_alerts: set[str]) -> str:
         """Re-check the symptom one tick later. Returns 'go', 'cleared' or 'changed'."""
         self.tick()
+        if self.recheck == "wait":
+            return "go"
         now = alerting_services(self.obs)
         if not now:
             return "cleared"
@@ -219,8 +234,15 @@ class ReconsiderAgent(BaseAgent):
             self.log(f"CANDIDATE {action} [{action.tier}] from {source}")
 
             # Reconsider before acting.
-            verdict = (self._reconsider(alerting_services(self.obs))
-                       if self.use_reconsider and replans < self.max_replans else "go")
+            if self.use_reconsider and replans < self.max_replans:
+                verdict = self._reconsider(alerting_services(self.obs))
+                if verdict == "go":
+                    self.log(f"RECHECK: same alerts, proceed with {action}" if self.recheck == "compare"
+                             else f"RECHECK (wait only): waited one tick, proceed with {action}")
+            else:
+                verdict = "go"
+                if self.use_reconsider:
+                    self.log(f"RECHECK skipped: re-plan cap reached, proceed with {action}")
             if verdict == "cleared":
                 self.res.abandoned += 1
                 self.log(f"RECONSIDER: alerts cleared, drop {action}")

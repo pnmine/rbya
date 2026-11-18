@@ -1,0 +1,38 @@
+{
+  "args": {
+    "reasoner": "scripted",
+    "episodes": 30,
+    "distinct": 8,
+    "repeats": 2,
+    "slip": 0.25,
+    "seed": 7,
+    "arms": "Ours",
+    "out": "results/human_0.9",
+    "save_traces": false,
+    "noise": 0.0,
+    "model": null,
+    "no_cache": false,
+    "human_accuracy": 0.9,
+    "approve_all": false
+  },
+  "llm": {},
+  "summary": {
+    "Ours": {
+      "incidents": 480,
+      "resolution_rate": 0.9979166666666667,
+      "mttr_min": 2.3340292275574113,
+      "mttr_first_min": 2.51255230125523,
+      "mttr_repeat_min": 2.15625,
+      "unnecessary_per_incident": 0.19791666666666666,
+      "reversed_per_incident": 0.0,
+      "abandoned_per_incident": 0.21458333333333332,
+      "escalations_per_incident": 0.15,
+      "harmful_high_risk_total": 0,
+      "collateral_ticks_total": 3,
+      "llm_calls_per_incident": 1.2416666666666667,
+      "store_hits_per_incident": 0.49583333333333335,
+      "llm_seconds_per_incident": 0.0,
+      "llm_unparsed_per_incident": 0.0
+    }
+  }
+}

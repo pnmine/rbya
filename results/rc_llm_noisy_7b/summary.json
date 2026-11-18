@@ -1,0 +1,49 @@
+{
+  "args": {
+    "reasoner": "llm",
+    "episodes": 10,
+    "distinct": 8,
+    "repeats": 2,
+    "slip": 0.25,
+    "seed": 7,
+    "arms": "Ours",
+    "out": "results/rc_llm_noisy_7b",
+    "save_traces": true,
+    "noise": 0.5,
+    "model": "qwen2.5:7b-instruct",
+    "no_cache": false,
+    "human_accuracy": 0.9,
+    "approve_all": false
+  },
+  "llm": {
+    "model": "qwen2.5:7b-instruct",
+    "api_calls": 0,
+    "cache_hits": 283,
+    "repairs": 0,
+    "truncated": 0,
+    "max_tokens": 4096,
+    "failures": 0,
+    "unparseable": 0,
+    "seconds_waiting": 0.0,
+    "mean_seconds_per_call": 0.0
+  },
+  "summary": {
+    "Ours": {
+      "incidents": 160,
+      "resolution_rate": 0.98125,
+      "mttr_min": 3.375796178343949,
+      "mttr_first_min": 4.294871794871795,
+      "mttr_repeat_min": 2.4683544303797467,
+      "unnecessary_per_incident": 0.83125,
+      "reversed_per_incident": 0.15625,
+      "abandoned_per_incident": 0.24375,
+      "escalations_per_incident": 0.3625,
+      "harmful_high_risk_total": 2,
+      "collateral_ticks_total": 5,
+      "llm_calls_per_incident": 1.76875,
+      "store_hits_per_incident": 0.46875,
+      "llm_seconds_per_incident": 11.874937500000005,
+      "llm_unparsed_per_incident": 0.0
+    }
+  }
+}

@@ -15,7 +15,7 @@ import statistics as st
 from collections import defaultdict
 from dataclasses import asdict
 
-from rbya.agents import ReActAgent, ReconsiderAgent, RollbackAgent
+from rbya.agents import ReActAgent, ReconsiderAgent, RollbackAgent, WaitingReActAgent
 from rbya.human import SimulatedHuman
 from rbya.memory import ProcedureStore
 from rbya.reasoners import LLMReasoner, ScriptedReasoner
@@ -23,6 +23,8 @@ from rbya.sim import FAULT_KINDS, Simulator, sample_fault
 
 ARMS = ["B1-ReAct", "B2-ActRollback", "Ours-noCompile", "Ours"]
 ABLATIONS = ["Abl-tiersOnly", "Abl-noReconsider", "Abl-noHold", "Abl-noTiers"]
+CONTROLS = ["B1-wait", "Ours-waitOnly"]   # is it the re-check or only the one-tick wait?
+HUMAN = {"accuracy": 0.9, "approve_all": False}
 
 
 def incident_sequence(rng: random.Random, n_distinct: int, repeats: int):
@@ -47,9 +49,13 @@ def make_reasoner(kind: str, seed: int, slip: float):
 
 
 def make_agent(arm, reasoner, seed, store):
-    human = SimulatedHuman(seed=seed)
+    human = SimulatedHuman(seed=seed, accuracy=HUMAN["accuracy"], approve_all=HUMAN["approve_all"])
     if arm == "B1-ReAct":
         return ReActAgent(reasoner)
+    if arm == "B1-wait":
+        return WaitingReActAgent(reasoner)
+    if arm == "Ours-waitOnly":
+        return ReconsiderAgent(reasoner, human, compile=True, store=store, recheck="wait", name=arm)
     if arm == "B2-ActRollback":
         return RollbackAgent(reasoner)
     if arm == "Ours-noCompile":
@@ -79,7 +85,10 @@ def main():
     ap.add_argument("--noise", type=float, default=0.0, help="red-herring logs: 0 clear, 0.5 noisy")
     ap.add_argument("--model", default=None, help="LLM model name (overrides RBYA_LLM_MODEL)")
     ap.add_argument("--no-cache", action="store_true", help="do not reuse identical LLM replies")
+    ap.add_argument("--human-accuracy", type=float, default=0.9, help="chance the simulated on-call engineer judges right")
+    ap.add_argument("--approve-all", action="store_true", help="the simulated engineer approves every request")
     args = ap.parse_args()
+    HUMAN.update(accuracy=args.human_accuracy, approve_all=args.approve_all)
     os.makedirs(args.out, exist_ok=True)
     arms = args.arms.split(",")
 

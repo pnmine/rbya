@@ -7,13 +7,16 @@ from .actions import Action
 
 
 class SimulatedHuman:
-    def __init__(self, seed: int = 0, accuracy: float = 0.9, delay_ticks: int = 4):
+    def __init__(self, seed: int = 0, accuracy: float = 0.9, delay_ticks: int = 4, approve_all: bool = False):
         self.rng = random.Random(seed)
         self.accuracy = accuracy
         self.delay_ticks = delay_ticks      # time to wake up and look (4 ticks = 2 min)
         self.requests = 0
+        self.approve_all = approve_all     # control: a rubber-stamp reviewer
 
     def review(self, action: Action, correct: Action | None) -> bool:
         self.requests += 1
+        if self.approve_all:
+            return True
         right = (correct is not None and action == correct)
         return right if self.rng.random() < self.accuracy else not right

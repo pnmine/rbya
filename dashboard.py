@@ -37,7 +37,7 @@ FONT = "https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5.2.5"
 
 CATEGORY = {  # trace tag -> (label shown, colour)
     "ALERT": ("Alert", T["alert"]), "REASON": ("Reasoning", T["ink"]), "CANDIDATE": ("Plan", T["ink"]),
-    "REASONER": ("Reasoning", T["muted"]), "HOLD": ("Hold", T["pending"]), "RECONSIDER": ("Re-check", T["pending"]),
+    "REASONER": ("Reasoning", T["muted"]), "HOLD": ("Hold", T["pending"]), "RECONSIDER": ("Re-check", T["pending"]), "RECHECK": ("Re-check", T["pending"]),
     "ESCALATE": ("Human", T["human"]), "HUMAN": ("Human", T["human"]), "EXECUTE": ("Action", T["focus"]),
     "UNDO": ("Undo", T["pending"]), "POST-CHECK": ("Post-check", T["pending"]), "COMPILE": ("Memory", T["memory"]),
 }
@@ -277,6 +277,13 @@ def plain(tag, rest):
         return f"Plan {m.group(1)}, {TIER.get(m.group(2), m.group(2))}, from the {src}"
     if tag == "EXECUTE" and m:
         return f"Ran {m.group(1)}. " + ("Fixed the cause." if "fixed root cause" in rest else "Did not fix the cause.")
+    if tag == "RECHECK":
+        act = rest.split(" with ")[-1] if " with " in rest else ""
+        if rest.startswith("skipped"):
+            return f"Re-check skipped (re-plan limit reached); runs {act}"
+        if rest.startswith("(wait only)"):
+            return f"Waited one tick, runs {act}"
+        return f"Re-check: same alerts, runs {act}"
     if tag == "RECONSIDER":
         if "cleared" in rest:
             return f"Re-checked: the alerts cleared on their own, so {rest.split('drop ')[-1]} was dropped"
@@ -315,6 +322,13 @@ def plain_th(tag, rest, m):
         return f"วางแผน {m.group(1)} ({TIER_TH.get(m.group(2), m.group(2))}) จาก {src}"
     if tag == "EXECUTE" and m:
         return f"ทำ {m.group(1)} " + ("แก้ต้นเหตุได้" if "fixed root cause" in rest else "แต่ไม่ได้แก้ต้นเหตุ")
+    if tag == "RECHECK":
+        act = rest.split(" with ")[-1] if " with " in rest else ""
+        if rest.startswith("skipped"):
+            return f"ข้ามการตรวจซ้ำ (วางแผนใหม่ครบ 2 ครั้งแล้ว) ทำ {act}"
+        if rest.startswith("(wait only)"):
+            return f"รอหนึ่ง tick แล้วทำ {act}"
+        return f"ตรวจซ้ำ: อาการเหมือนเดิม ทำ {act} ต่อ"
     if tag == "RECONSIDER":
         act = rest.split("drop ")[-1].split(" and")[0]
         if "cleared" in rest:
@@ -538,6 +552,9 @@ def _beats(events, upto):
             c = re.search(r"\(([\d.]+)\)", raw)
             out.append(dict(a=A, b=A, head=w("HOLD", "พักแผน"),
                             body=[w("not sure yet", "ยังไม่มั่นใจ") + (f" ({c.group(1)})" if c else "")], col=T["pending"]))
+        elif tag == "RECHECK" and not raw.startswith("skipped"):
+            out.append(dict(a=A, b=A, head=w("RE-CHECK", "ตรวจซ้ำ"),
+                            body=[w("same alerts: go", "อาการเหมือนเดิม: ทำต่อ")], col=T["pending"]))
         elif tag == "RECONSIDER":
             svcs = re.findall(r"'([^']+)'", raw)
             cleared = "cleared" in raw
